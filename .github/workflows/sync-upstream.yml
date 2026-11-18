@@ -1,0 +1,57 @@
+name: Sync Upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'ParkSnoopy/pstack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: actions/checkout@v4 - Check Out Fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - name: bash - Merge Upstream and Retain pstack Skills
+        shell: bash
+        env:
+          TARGET_BRANCH: main
+          UPSTREAM_URL: https://github.com/cursor/plugins
+          UPSTREAM_BRANCH: main
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch "$UPSTREAM_URL" "$UPSTREAM_BRANCH"
+          if ! git merge --no-commit --no-ff FETCH_HEAD; then
+            test "$(git ls-files --unmerged)" != ""
+            git diff --name-only --diff-filter=U -z |
+              git --literal-pathspecs restore --source=FETCH_HEAD --staged --worktree \
+                --pathspec-from-file=- --pathspec-file-nul
+          fi
+          git restore --source=HEAD --staged --worktree -- .github/workflows/sync-upstream.yml
+          excluded=(
+            ':(top,exclude,literal)pstack/skills/'
+            ':(top,exclude,literal)pstack/LICENSE'
+            ':(top,exclude,literal).github/workflows/sync-upstream.yml'
+          )
+          git rm -r --force --ignore-unmatch -- . "${excluded[@]}"
+          test -f pstack/skills/poteto-mode/SKILL.md
+          test -f pstack/LICENSE
+          test "$(git ls-files -- . "${excluded[@]}")" = ""
+          if git rev-parse --verify --quiet MERGE_HEAD >/dev/null || ! git diff --cached --quiet; then
+            git commit -m "chore: sync upstream pstack skills"
+            git push origin "HEAD:$TARGET_BRANCH"
+          fi
